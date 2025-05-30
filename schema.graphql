@@ -1,0 +1,24 @@
+# Indicates that an Input Object is a OneOf Input Object (and thus requires
+#                         exactly one of its field be provided)
+directive @oneOf on INPUT_OBJECT
+
+type Mutation {
+  createShortLink(link: String!, slug: String): ShortenedUrl!
+  redirect(slug: String!): ShortenedUrl!
+}
+
+type Query {
+  stats(slug: String!): Stats!
+}
+
+# A record of the complete URL and its short link slug.
+type ShortenedUrl {
+  url: String!
+  slug: String!
+}
+
+# A record of the metrics recorded for each instance of [`ShortenedUrl`]
+type Stats {
+  link: ShortenedUrl!
+  redirects: Int!
+}
