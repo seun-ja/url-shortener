@@ -4,10 +4,10 @@ use crate::db::UrlDbSchema;
 
 use super::{ShortenedUrl, Slug, Url};
 
-pub fn parse_url(url: Url, slug: Option<Slug>) -> UrlDbSchema {
+pub fn parse_url(custom_url: String, url: Url, slug: Option<Slug>) -> UrlDbSchema {
     UrlDbSchema {
         shortened_url: ShortenedUrl {
-            url: "ht.h".to_string().into(),
+            url: custom_url.into(),
             slug: generate_random_slug(),
         },
         parsed_url: url,

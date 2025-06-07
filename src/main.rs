@@ -4,6 +4,7 @@ use std::env;
 use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use url_shortener::Config;
 
 mod graphql;
 mod server;
@@ -37,7 +38,7 @@ async fn main() -> std::io::Result<()> {
 
     Lazy::force(&TRACING);
 
-    server::start(env::var("BACKUP_PATH_FILE").unwrap_or("./backupnew.txt".to_string()))
-        .await?
-        .await
+    let config = envy::from_env::<Config>().unwrap_or_default();
+
+    server::start(config).await?.await
 }

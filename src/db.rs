@@ -2,17 +2,18 @@ use std::{
     collections::{BTreeMap, btree_map},
     fs::File,
     io::{BufRead, BufReader},
-    sync::{Arc, Mutex},
     time::SystemTime,
 };
 
 use crate::{
-    ShortenedUrl, Slug, Url,
+    Config, ShortenedUrl, Slug, Url,
     error::UrlShortenerError,
     event::{Action, Event},
     stats::Stats,
     update_backup_data,
 };
+
+pub type BackUpData = (BTreeMap<String, UrlDbSchema>, Vec<Event>);
 
 #[derive(Clone, Default)]
 /// In-memory database for shortened url management
@@ -22,33 +23,55 @@ pub struct InMemDatabase {
 }
 
 impl InMemDatabase {
-    pub fn init(events_db: Vec<Event>) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
-            url_db: BTreeMap::new(),
-            events_db,
-        }))
+    pub fn init(backedup_data: BackUpData) -> Self {
+        Self {
+            url_db: backedup_data.0,
+            events_db: backedup_data.1,
+        }
     }
 }
 
-pub fn load_from_backup(file_path: &str) -> Result<Vec<Event>, Box<dyn std::error::Error>> {
-    let mut new_store = Vec::new();
-    if let Ok(file) = File::open(file_path) {
+pub fn load_from_backup(config: &Config) -> Result<BackUpData, Box<dyn std::error::Error>> {
+    let mut new_event_store = Vec::new();
+    let mut new_url_store = BTreeMap::new();
+    if let Ok(file) = File::open(&config.backup_file_path) {
         let reader = BufReader::new(file);
 
         for line in reader.lines() {
             let event: Event = serde_json::from_str(&line?)?;
-            new_store.push(event)
+            new_event_store.push(event.clone());
+            match event.action {
+                Action::CreateShortLink(url, slug) => {
+                    new_url_store.insert(
+                        url.to_string(),
+                        UrlDbSchema {
+                            shortened_url: ShortenedUrl {
+                                url: config.custom_url.clone().into(),
+                                slug: event.shortened_slug.clone().unwrap_or_default(),
+                            },
+                            parsed_url: url,
+                            parsed_slug: slug,
+                            clicks: 0, // TODO: Get real value
+                        },
+                    );
+                }
+                Action::Redirect(_) => (),
+            }
         }
+
+        tracing::info!(
+            "Database backup loaded with {} events data & {} urls",
+            new_event_store.len(),
+            new_url_store.len()
+        );
     } else {
-        File::create(file_path)?;
+        File::create(&config.backup_file_path)?;
     };
 
-    tracing::info!("Database backup loaded with {} data", new_store.len());
-
-    Ok(new_store)
+    Ok((new_url_store, new_event_store))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UrlDbSchema {
     pub shortened_url: ShortenedUrl, // TODO: unique to user/ip
     pub parsed_url: Url,
@@ -66,18 +89,6 @@ impl InMemDatabase {
             tracing::warn!("Url already exists");
             Err(UrlShortenerError::SlugAlreadyExists)
         }
-    }
-
-    /// Get a `ShortenedUrl` from database
-    pub fn get_url_by_shortened_url(
-        &self,
-        shortened_url: ShortenedUrl,
-    ) -> Result<Url, UrlShortenerError> {
-        self.url_db
-            .values()
-            .find(|url| url.shortened_url == shortened_url)
-            .ok_or(UrlShortenerError::NotFound)
-            .map(|record| record.parsed_url.clone())
     }
 
     /// Get a `ShortenedUrl` from database
@@ -115,9 +126,14 @@ impl InMemDatabase {
         &mut self,
         action: Action,
         backup_file_path: &str,
+        shortened_slug: Option<Slug>,
     ) -> Result<(), UrlShortenerError> {
         let timestamp = SystemTime::now();
-        let event = Event { action, timestamp };
+        let event = Event {
+            action,
+            timestamp,
+            shortened_slug,
+        };
         update_backup_data(
             &format!(
                 "{}\n",
@@ -152,5 +168,9 @@ impl InMemDatabase {
 
     pub fn get_events(&self) -> Vec<Event> {
         self.events_db.clone()
+    }
+
+    pub fn get_urls(&self) -> BTreeMap<String, UrlDbSchema> {
+        self.url_db.clone()
     }
 }

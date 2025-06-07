@@ -60,8 +60,12 @@ stats(
 
 ## Schema
 
-Schema file available at `./schema.graphql
+Schema file available at `./schema.graphql`
 
 ## Configuration
 
-You can configure the backup file location in `.env`. Provide `BACKUP_PATH_FILE`.
+You can configure the backup file location in `.env`. Provide the following
+
+`BACKUP_PATH_FILE`
+`MAX_LOG_LEVEL`
+`SHORT_URL`

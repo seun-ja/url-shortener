@@ -1,10 +1,11 @@
 use std::{fmt::Display, fs::OpenOptions, io::Write as _};
 
-use crate::event::EventManager;
+use crate::db::BackUpData;
 use crate::shortener::error::UrlShortenerError;
 use crate::shortener::mutations::Mutations;
 use crate::shortener::queries::Query;
 use crate::shortener::stats::Stats;
+use crate::{db::InMemDatabase, event::EventManager};
 use async_graphql::{NewType, SimpleObject};
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +27,9 @@ impl Display for Url {
 }
 
 /// A newtype representing the short link slug for URLs provided by the user.
-#[derive(Debug, Clone, Eq, Hash, PartialEq, PartialOrd, Ord, NewType, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Eq, Hash, PartialEq, PartialOrd, Ord, NewType, Serialize, Deserialize,
+)]
 pub struct Slug(String);
 
 /// A record of the complete URL and its short link slug.
@@ -40,13 +43,17 @@ pub struct ShortenedUrl {
 pub struct UrlShortener {
     event_manager: EventManager,
     pub backup_file_path: String,
+    pub custom_url: String,
 }
 
 impl UrlShortener {
-    pub fn init(backup_file_path: String) -> Self {
+    pub fn init(backup_file_path: String, custom_url: String, backup_data: BackUpData) -> Self {
         Self {
-            event_manager: EventManager::default(),
+            event_manager: EventManager {
+                db: InMemDatabase::init(backup_data),
+            },
             backup_file_path,
+            custom_url,
         }
     }
 }
@@ -87,11 +94,8 @@ impl Mutations for UrlShortener {
         self.event_manager.record_event(
             event::Action::CreateShortLink(url, slug),
             &self.backup_file_path,
+            &self.custom_url,
         )
-
-        // call genrate url
-        // save
-        // todo!("Create a shortened URL based on an incoming URL as well as an optional slug")
     }
 
     /// For a given slug, look-up the original URL and return that, or return an error if the slug is
@@ -102,11 +106,11 @@ impl Mutations for UrlShortener {
     /// # Arguments
     /// * `slug`: Short link slug to find the complete URL for.
     fn redirect(&mut self, slug: Slug) -> Result<ShortenedUrl, UrlShortenerError> {
-        self.event_manager
-            .record_event(event::Action::Redirect(slug), &self.backup_file_path)
-        // todo!(
-        //     "Fetch the original URL based on slug while also updating the redirects count for the URL"
-        // )
+        self.event_manager.record_event(
+            event::Action::Redirect(slug),
+            &self.backup_file_path,
+            &self.custom_url,
+        )
     }
 
     /// Reload the state of this service from a backup file. This must be executed when the service
