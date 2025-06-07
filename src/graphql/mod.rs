@@ -10,15 +10,12 @@ use axum::routing::get;
 use axum::serve::Serve;
 use handler::health;
 use std::env;
-use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{Level, field, info, info_span};
-use url_shortener::db::InMemDatabase;
-use url_shortener::event::Event;
 
 pub struct GraphQLService<
     Query: ObjectType + 'static,
@@ -28,7 +25,6 @@ pub struct GraphQLService<
     name: &'static str,
     default_port: &'static str,
     schema: Schema<Query, Mutation, Subscription>,
-    in_memory_storage: Arc<Mutex<InMemDatabase>>,
 }
 
 impl<
@@ -42,7 +38,6 @@ impl<
             name: self.name,
             default_port: self.default_port,
             schema: self.schema.clone(),
-            in_memory_storage: self.in_memory_storage.clone(),
         }
     }
 }
@@ -58,13 +53,11 @@ impl<
         name: &'static str,
         default_port: &'static str,
         schema: Schema<Query, Mutation, Subscription>,
-        events_db: Vec<Event>,
     ) -> Self {
         Self {
             name,
             default_port,
             schema,
-            in_memory_storage: InMemDatabase::init(events_db),
         }
     }
 
