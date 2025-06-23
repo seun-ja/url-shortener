@@ -1,39 +1,41 @@
 use std::{
-    collections::{BTreeMap, btree_map},
+    collections::{HashMap, hash_map},
     fs::File,
     io::{BufRead, BufReader},
+    sync::{Arc, RwLock},
     time::SystemTime,
 };
 
 use crate::{
-    Config, ShortenedUrl, Slug, Url,
+    Config, ParsedSlug, ParsedUrl, ShortenedUrl, Slug,
     error::UrlShortenerError,
     event::{Action, Event},
     stats::Stats,
     update_backup_data,
+    utils::parse_url,
 };
 
-pub type BackUpData = (BTreeMap<String, UrlDbSchema>, Vec<Event>);
+pub type BackUpData = (HashMap<Slug, UrlDbSchema>, Vec<Event>);
 
 #[derive(Clone, Default)]
 /// In-memory database for shortened url management
 pub struct InMemDatabase {
-    url_db: BTreeMap<String, UrlDbSchema>,
-    events_db: Vec<Event>,
+    url_db: Arc<RwLock<HashMap<Slug, UrlDbSchema>>>,
+    events_db: Arc<RwLock<Vec<Event>>>,
 }
 
 impl InMemDatabase {
     pub fn init(backedup_data: BackUpData) -> Self {
         Self {
-            url_db: backedup_data.0,
-            events_db: backedup_data.1,
+            url_db: Arc::new(RwLock::new(backedup_data.0)),
+            events_db: Arc::new(RwLock::new(backedup_data.1)),
         }
     }
 }
 
 pub fn load_from_backup(config: &Config) -> Result<BackUpData, Box<dyn std::error::Error>> {
     let mut new_event_store = Vec::new();
-    let mut new_url_store = BTreeMap::new();
+    let mut new_url_store = HashMap::new();
     if let Ok(file) = File::open(&config.backup_file_path) {
         let reader = BufReader::new(file);
 
@@ -43,7 +45,7 @@ pub fn load_from_backup(config: &Config) -> Result<BackUpData, Box<dyn std::erro
             match event.action {
                 Action::CreateShortLink(url, slug) => {
                     new_url_store.insert(
-                        url.to_string(),
+                        slug.clone().unwrap_or("".to_string().into()),
                         UrlDbSchema {
                             shortened_url: ShortenedUrl {
                                 url: config.custom_url.clone().into(),
@@ -74,36 +76,60 @@ pub fn load_from_backup(config: &Config) -> Result<BackUpData, Box<dyn std::erro
 #[derive(Clone, Debug)]
 pub struct UrlDbSchema {
     pub shortened_url: ShortenedUrl, // TODO: unique to user/ip
-    pub parsed_url: Url,
-    pub parsed_slug: Option<Slug>,
+    pub parsed_url: ParsedUrl,
+    pub parsed_slug: Option<ParsedSlug>,
     pub clicks: u64,
 }
 
 impl InMemDatabase {
     /// Stores a `ShortenedUrl` to database
-    pub fn insert_url(&mut self, new_url: UrlDbSchema) -> Result<ShortenedUrl, UrlShortenerError> {
-        if let btree_map::Entry::Vacant(e) = self.url_db.entry(new_url.parsed_url.to_string()) {
-            e.insert(new_url.clone());
-            Ok(new_url.shortened_url)
-        } else {
-            tracing::warn!("Url already exists");
-            Err(UrlShortenerError::SlugAlreadyExists)
+    pub fn insert_url(
+        &self,
+        custom_url: &str,
+        parsed_url: ParsedUrl,
+        parsed_slug: Option<ParsedSlug>,
+    ) -> Result<ShortenedUrl, UrlShortenerError> {
+        let shortened_url = parse_url(
+            custom_url.to_string(),
+            parsed_url.clone(),
+            parsed_slug.clone(),
+        );
+        match self
+            .url_db
+            .write()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .entry(shortened_url.shortened_url.slug.clone())
+        {
+            hash_map::Entry::Vacant(e) => {
+                e.insert(shortened_url.clone());
+                Ok(shortened_url.shortened_url)
+            }
+            hash_map::Entry::Occupied(url) => {
+                tracing::warn!("Url already exists");
+                Ok(url.into_mut().shortened_url.clone())
+            }
         }
     }
 
     /// Get a `ShortenedUrl` from database
-    pub fn get_url_by_slug(&mut self, slug: Slug) -> Result<ShortenedUrl, UrlShortenerError> {
+    pub fn get_url_by_slug(&self, slug: Slug) -> Result<ShortenedUrl, UrlShortenerError> {
         let url = self
             .url_db
-            .values()
-            .find(|url| url.shortened_url.slug == slug)
+            .read()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .get(&slug)
             .ok_or(UrlShortenerError::NotFound)
             .map(|record| ShortenedUrl {
                 url: record.parsed_url.clone(),
                 slug: record.parsed_slug.clone().unwrap_or("".to_string().into()),
             })?;
 
-        if let Some(e) = self.url_db.get_mut(&url.url.to_string()) {
+        if let Some(e) = self
+            .url_db
+            .write()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .get_mut(&url.slug)
+        {
             e.clicks += 1;
             tracing::info!("clicked {} time(s)", e.clicks);
         };
@@ -113,8 +139,9 @@ impl InMemDatabase {
 
     pub fn slug_clicks_stats(&self, slug: Slug) -> Result<Stats, UrlShortenerError> {
         self.url_db
-            .values()
-            .find(|url| url.shortened_url.slug == slug)
+            .read()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .get(&slug)
             .ok_or(UrlShortenerError::NotFound)
             .map(|record| Stats {
                 link: record.shortened_url.clone(),
@@ -123,7 +150,7 @@ impl InMemDatabase {
     }
 
     pub fn insert_event(
-        &mut self,
+        &self,
         action: Action,
         backup_file_path: &str,
         shortened_slug: Option<Slug>,
@@ -142,15 +169,15 @@ impl InMemDatabase {
             ),
             backup_file_path,
         )?;
-        self.events_db.push(event);
+        self.events_db
+            .write()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .push(event);
 
         Ok(())
     }
 
-    pub fn reload_db_from_backup(
-        &mut self,
-        backup_file_path: &str,
-    ) -> Result<(), UrlShortenerError> {
+    pub fn reload_db_from_backup(&self, backup_file_path: &str) -> Result<(), UrlShortenerError> {
         let file = File::open(backup_file_path)
             .map_err(|e| UrlShortenerError::FileOpenError(e.to_string()))?;
         let reader = BufReader::new(file);
@@ -160,17 +187,28 @@ impl InMemDatabase {
                 &line.map_err(|e| UrlShortenerError::FileOpenError(e.to_string()))?,
             )
             .map_err(|e| UrlShortenerError::FileOpenError(e.to_string()))?;
-            self.events_db.push(event)
+            self.events_db
+                .write()
+                .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+                .push(event)
         }
 
         Ok(())
     }
 
-    pub fn get_events(&self) -> Vec<Event> {
-        self.events_db.clone()
+    pub fn get_events(&self) -> Result<Vec<Event>, UrlShortenerError> {
+        Ok(self
+            .events_db
+            .read()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .clone())
     }
 
-    pub fn get_urls(&self) -> BTreeMap<String, UrlDbSchema> {
-        self.url_db.clone()
+    pub fn get_urls(&self) -> Result<HashMap<Slug, UrlDbSchema>, UrlShortenerError> {
+        Ok(self
+            .url_db
+            .read()
+            .map_err(|e| UrlShortenerError::DatabaseError(e.to_string()))?
+            .clone())
     }
 }

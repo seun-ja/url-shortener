@@ -16,6 +16,9 @@ pub mod queries;
 pub mod stats;
 pub mod utils;
 
+pub type ParsedSlug = Slug;
+pub type ParsedUrl = Url;
+
 /// A newtype representing the URLs that are provided by the user to generate short links for.
 #[derive(Debug, Clone, Eq, Hash, PartialEq, PartialOrd, Ord, NewType, Serialize, Deserialize)]
 pub struct Url(String);
@@ -31,6 +34,12 @@ impl Display for Url {
     Debug, Default, Clone, Eq, Hash, PartialEq, PartialOrd, Ord, NewType, Serialize, Deserialize,
 )]
 pub struct Slug(String);
+
+impl Display for Slug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A record of the complete URL and its short link slug.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, SimpleObject, Serialize, Deserialize)]
@@ -87,7 +96,7 @@ impl Mutations for UrlShortener {
     /// * `slug`: Optional slug parameter to use for the URL. If the provided slug is already in use,
     ///   this mutation should return an error.
     fn create_short_link(
-        &mut self,
+        &self,
         url: Url,
         slug: Option<Slug>,
     ) -> Result<ShortenedUrl, UrlShortenerError> {
@@ -105,7 +114,7 @@ impl Mutations for UrlShortener {
     ///
     /// # Arguments
     /// * `slug`: Short link slug to find the complete URL for.
-    fn redirect(&mut self, slug: Slug) -> Result<ShortenedUrl, UrlShortenerError> {
+    fn redirect(&self, slug: Slug) -> Result<ShortenedUrl, UrlShortenerError> {
         self.event_manager.record_event(
             event::Action::Redirect(slug),
             &self.backup_file_path,
@@ -118,7 +127,7 @@ impl Mutations for UrlShortener {
     ///
     /// In addition, an event needs to be recorded to indicate that the service was recovered from a
     /// backup.
-    fn reload_from_backup(&mut self, backup_file_path: &str) -> Result<(), UrlShortenerError> {
+    fn reload_from_backup(&self, backup_file_path: &str) -> Result<(), UrlShortenerError> {
         self.event_manager
             .db
             .reload_db_from_backup(backup_file_path)

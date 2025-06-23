@@ -10,6 +10,8 @@ pub enum UrlShortenerError {
     NotFound,
     /// The provided custom slug is already being used for a different URL
     SlugAlreadyExists,
+    /// Database error
+    DatabaseError(String),
     /// Any other service error
     InternalServiceError,
     /// File Open Error
@@ -29,6 +31,7 @@ impl Display for UrlShortenerError {
             UrlShortenerError::InternalServiceError => f.write_str("Internal service error"),
             UrlShortenerError::FileOpenError(e) => write!(f, "File Open Error: {}", e),
             UrlShortenerError::SerializationError(e) => write!(f, "File Open Error: {}", e),
+            UrlShortenerError::DatabaseError(e) => write!(f, "Database Error: {}", e),
         }
     }
 }

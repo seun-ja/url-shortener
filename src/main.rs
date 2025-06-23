@@ -27,7 +27,8 @@ static TRACING: Lazy<()> = Lazy::new(|| {
                 .with_level(true)
                 .with_line_number(true)
                 .with_current_span(true)
-                .with_target(true),
+                .with_target(true)
+                .pretty(),
         )
         .init();
 });

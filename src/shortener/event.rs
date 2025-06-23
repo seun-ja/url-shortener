@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{db::InMemDatabase, error::UrlShortenerError, shortener::utils::parse_url};
+use crate::{ParsedSlug, ParsedUrl, db::InMemDatabase, error::UrlShortenerError};
 
-use super::{ShortenedUrl, Slug, Url};
+use super::{ShortenedUrl, Slug};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Action {
     // Actions here for which to create events
-    CreateShortLink(Url, Option<Slug>),
+    CreateShortLink(ParsedUrl, Option<ParsedSlug>),
     Redirect(Slug),
 }
 
@@ -25,29 +25,22 @@ pub struct EventManager {
 
 impl EventManager {
     pub fn record_event(
-        &mut self,
+        &self,
         action: Action,
         backup_file_path: &str,
         custom_url: &str,
     ) -> Result<ShortenedUrl, UrlShortenerError> {
         match action {
-            Action::CreateShortLink(parsed_url, parsed_slug) => {
-                let shortened_url = parse_url(
-                    custom_url.to_string(),
-                    parsed_url.clone(),
-                    parsed_slug.clone(),
-                );
-                self.db.insert_url(shortened_url).inspect(|shortened_url| {
-                    if let Err(err) = self.db.insert_event(
+            Action::CreateShortLink(parsed_url, parsed_slug) => self
+                .db
+                .insert_url(custom_url, parsed_url.clone(), parsed_slug.clone())
+                .inspect(|url| {
+                    let _ = self.db.insert_event(
                         Action::CreateShortLink(parsed_url, parsed_slug),
                         backup_file_path,
-                        Some(shortened_url.slug.clone()),
-                    ) {
-                        // TODO: ensure it's saved
-                        tracing::error!("{err}");
-                    };
-                })
-            }
+                        Some(url.slug.clone()),
+                    );
+                }),
             Action::Redirect(slug) => {
                 self.db
                     .insert_event(Action::Redirect(slug.clone()), backup_file_path, None)?;
@@ -57,7 +50,7 @@ impl EventManager {
     }
 
     pub fn get_events(&self) -> Result<Vec<Event>, UrlShortenerError> {
-        Ok(self.db.get_events())
+        self.db.get_events()
     }
 
     // pub fn reload_from_backup(&self, data: Vec<Event>) -> Result<(), UrlShortenerError> {

@@ -2,7 +2,6 @@ use crate::graphql::controller::{UrlMutations, UrlQueries};
 use async_graphql::MergedObject;
 use async_graphql::extensions::Tracing;
 use async_graphql::{EmptySubscription, Schema};
-use std::sync::Mutex;
 use url_shortener::UrlShortener;
 use url_shortener::db::BackUpData;
 
@@ -21,6 +20,6 @@ pub fn build_schema(
 
     Schema::build(Query::default(), Mutation::default(), EmptySubscription)
         .extension(Tracing)
-        .data(Mutex::new(url_shortener))
+        .data(url_shortener)
         .finish()
 }
